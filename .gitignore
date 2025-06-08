@@ -2,3 +2,4 @@
 *.swp
 openssl-ca
 output
+wpa_supplicant.conf
