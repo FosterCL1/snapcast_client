@@ -1,1 +1,2 @@
 source "$BR2_EXTERNAL_BR2RAUC_PATH/package/snapcast/Config.in"
+source "$BR2_EXTERNAL_BR2RAUC_PATH/package/snap-mpd/Config.in"
