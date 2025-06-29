@@ -4,7 +4,7 @@
 #
 ################################################################################
 
-SNAPCAST_VERSION = v0.27.0
+SNAPCAST_VERSION = v0.31.0
 SNAPCAST_SITE = $(call github,badaix,snapcast,$(SNAPCAST_VERSION))
 SNAPCAST_DEPENDENCIES = libogg alsa-lib avahi # libstdcpp libatomic libflac libvorbisidec
 SNAPCAST_LICENSE = GPL-3.0+
@@ -12,7 +12,7 @@ SNAPCAST_LICENSE_FILES = LICENSE
 
 define SNAPCLIENT_INSTALL_CONFIG
 	mkdir -p $(TARGET_DIR)/etc/default
-	$(INSTALL) -m 0755 -D $(@D)/debian/snapclient.default $(TARGET_DIR)/etc/default/snapclient
+	$(INSTALL) -m 0755 -D $(@D)/extras/package/debian/snapclient.default $(TARGET_DIR)/etc/default/snapclient
 endef
 
 
@@ -31,7 +31,7 @@ define SNAPCLIENT_INSTALL_INIT_SYSV
 endef
 
 define SNAPCLIENT_INSTALL_INIT_SYSTEMD
-	$(INSTALL) -D -m 0644 $(@D)/client/debian/snapclient.service \
+	$(INSTALL) -D -m 0644 $(@D)/extras/package/debian/snapclient.service \
 		$(TARGET_DIR)/usr/lib/systemd/system/snapclient.service
 
 	mkdir -p $(TARGET_DIR)/etc/systemd/system/multi-user.target.wants
