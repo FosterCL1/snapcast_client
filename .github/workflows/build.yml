@@ -1,0 +1,30 @@
+name: Build Snapcast Client
+
+on:
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Buildroot dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git wget cpio rsync file bc flex bison libssl-dev libncurses5-dev python3 sudo quilt unzip
+
+      - name: Build default target
+        run: |
+          make
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: output/images
