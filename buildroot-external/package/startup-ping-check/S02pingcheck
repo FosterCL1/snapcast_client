@@ -1,0 +1,30 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          startup-ping-check
+# Required-Start:    $network
+# Required-Stop:
+# Default-Start:     S
+# Default-Stop:
+# Short-Description: Check connectivity to 192.168.2.20 at boot
+### END INIT INFO
+
+IP="192.168.2.20"
+TIMEOUT=60   # seconds
+COUNTER=0
+
+printf "Starting connectivity check to %s...\n" "$IP"
+
+while [ "$COUNTER" -lt "$TIMEOUT" ]; do
+    if ping -c1 -w1 "$IP" >/dev/null 2>&1; then
+        echo "Ping succeeded. Marking system good with rauc."
+        if command -v rauc >/dev/null 2>&1; then
+            rauc status mark-good || echo "Failed to mark-good via rauc"
+        fi
+        exit 0
+    fi
+    COUNTER=$((COUNTER+1))
+    sleep 1
+done
+
+echo "Unable to reach $IP after $TIMEOUT seconds. Rebooting..."
+/sbin/reboot -f || reboot
