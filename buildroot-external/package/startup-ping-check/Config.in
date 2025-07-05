@@ -1,0 +1,6 @@
+config BR2_PACKAGE_STARTUP_PING_CHECK
+    bool "Startup ping check script"
+    help
+      Installs a boot-time init script which pings 192.168.2.20 for up to 60
+      seconds. If unreachable, the device is force-rebooted; if reachable,
+      the slot is marked good via "rauc status mark-good".
