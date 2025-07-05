@@ -1,0 +1,11 @@
+[Unit]
+Description=Startup connectivity ping check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pingcheck.sh
+
+[Install]
+WantedBy=multi-user.target
