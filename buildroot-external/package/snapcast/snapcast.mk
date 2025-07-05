@@ -10,6 +10,12 @@ SNAPCAST_DEPENDENCIES = libogg alsa-lib avahi # libstdcpp libatomic libflac libv
 SNAPCAST_LICENSE = GPL-3.0+
 SNAPCAST_LICENSE_FILES = LICENSE
 
+# Create dedicated user/group for snapclient
+
+define SNAPCAST_USERS
+	snapclient -1 snapclient -1 * /var/run/snapclient - Snapcast Client user
+endef
+
 define SNAPCLIENT_INSTALL_CONFIG
 	mkdir -p $(TARGET_DIR)/etc/default
 	$(INSTALL) -m 0755 -D $(@D)/extras/package/debian/snapclient.default $(TARGET_DIR)/etc/default/snapclient
