@@ -19,6 +19,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential git wget cpio rsync file bc flex bison libssl-dev libncurses5-dev python3 sudo quilt unzip
 
+      - name: Write RAUC secrets to files
+        run: |
+          mkdir -p buildroot-external/openssl-ca/dev/private
+          printf '%s' "${{ secrets.RAUC_KEY }}" > buildroot-external/openssl-ca/dev/private/development-1.key.pem
+          printf '%s' "${{ secrets.RAUC_CERT }}" > buildroot-external/openssl-ca/dev/development-1.cert.pem
+          printf '%s' "${{ secrets.RAUC_CA }}" > buildroot-external/openssl-ca/dev/ca.cert.pem
+
       - name: Build default target
         run: |
           make raspberrypi4-64-rauc
