@@ -17,7 +17,7 @@ jobs:
       - name: Install Buildroot dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential git wget cpio rsync file bc flex bison libssl-dev libncurses5-dev python3 sudo quilt unzip
+          sudo apt-get install -y build-essential git wget cpio rsync file bc flex bison libssl-dev libncurses5-dev python3 sudo quilt unzip libgnutls28-dev
 
       - name: Write RAUC secrets to files
         run: |
