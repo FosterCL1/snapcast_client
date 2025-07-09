@@ -13,7 +13,7 @@ SNAPCAST_LICENSE_FILES = LICENSE
 # Create dedicated user/group for snapclient
 
 define SNAPCAST_USERS
-	snapclient -1 snapclient -1 * /var/run/snapclient - Snapcast Client user
+	snapclient -1 snapclient -1 * /var/run/snapclient - audio Snapcast Client user
 endef
 
 define SNAPCLIENT_INSTALL_CONFIG
