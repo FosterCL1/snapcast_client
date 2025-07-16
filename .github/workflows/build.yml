@@ -26,6 +26,28 @@ jobs:
           printf '%s' "${{ secrets.RAUC_CERT }}" > buildroot-external/openssl-ca/dev/development-1.cert.pem
           printf '%s' "${{ secrets.RAUC_CA }}" > buildroot-external/openssl-ca/dev/ca.cert.pem
 
+      - name: Free space on build drive
+        run: |
+          # Inspired by https://github.com/easimon/maximize-build-space/blob/v7/action.yml
+          df -h
+          sudo rm -rf /usr/local/lib/android/sdk/ndk
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo mkdir /mnt/cache
+          sudo mkdir /mnt/output
+          WORKSPACE_OWNER="$(stat -c '%U:%G' "${GITHUB_WORKSPACE}")"
+          # output directory is symlinked for easier access from workspace
+          # but for build container it must be mounted as a volume
+          sudo ln -sf /mnt/output "${GITHUB_WORKSPACE}/output"
+          sudo chown -R "${WORKSPACE_OWNER}" /mnt/cache
+          sudo chown -R "${WORKSPACE_OWNER}" /mnt/output
+          df -h
+
+      - name: "Restore cache: object files"
+        uses: actions/cache/restore@v4
+        with:
+          path: /mnt/cache/cc
+          key: my_build
+
       - name: Build default target
         run: |
           make raspberrypi4-64-rauc
@@ -35,3 +57,11 @@ jobs:
         with:
           name: build-output
           path: output/images
+
+      - name: "Save cache: object files"
+        if: github.ref == 'refs/heads/dev'
+        uses: actions/cache/save@v4
+        with:
+          path: /mnt/cache/cc
+          key: my_build
+
