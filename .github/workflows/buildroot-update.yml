@@ -25,14 +25,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Ensure buildroot submodule is on 2025.05 branch & fetch latest
+      - name: Ensure buildroot submodule is on 2025.05.x branch & fetch latest
         id: update
         shell: bash
         run: |
           set -euo pipefail
           # Move into the submodule directory, make sure correct branch is tracked
           pushd buildroot
-          git fetch origin 2025.05 --depth=1
+          git fetch origin 2025.05.x --depth=1
           NEW_SHA=$(git rev-parse origin/2025.05)
           CUR_SHA=$(git rev-parse HEAD)
           echo "Current SHA: $CUR_SHA"
@@ -53,16 +53,16 @@ jobs:
       - name: Commit submodule update
         if: steps.update.outputs.changed == 'true'
         run: |
-          git commit -m "chore: update buildroot submodule to latest 2025.05"
+          git commit -m "chore: update buildroot submodule to latest 2025.05.x"
 
       - name: Create Pull Request
         if: steps.update.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
-          title: "chore: Update buildroot submodule (2025.05)"
+          title: "chore: Update buildroot submodule (2025.05.x)"
           body: |
-            Automated nightly PR to update the buildroot submodule to the latest commit on the 2025.05 branch.
-          commit-message: "chore: update buildroot submodule to latest 2025.05"
-          branch: buildroot-update-2025.05
+            Automated nightly PR to update the buildroot submodule to the latest commit on the 2025.05.x branch.
+          commit-message: "chore: update buildroot submodule to latest 2025.05.x"
+          branch: buildroot-update-2025.05.x
           delete-branch: true
           token: ${{ secrets.GITHUB_TOKEN }}
