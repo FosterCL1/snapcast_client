@@ -50,7 +50,7 @@ jobs:
 
       - name: Build default target
         run: |
-          make raspberrypi4-64-rauc
+          BR2_CCACHE_DIR=/mnt/cache/cc make raspberrypi4-64-rauc
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
