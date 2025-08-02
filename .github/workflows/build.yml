@@ -56,7 +56,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-output
-          path: output/images
+          path: output/images/*.raucb
 
       - name: "Save cache: object files"
         uses: actions/cache/save@v4
