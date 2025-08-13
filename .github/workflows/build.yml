@@ -1,6 +1,8 @@
 name: Build Snapcast Client
 
 on:
+  push:
+    branches: [ "main" ]
   pull_request:
     branches: [ "main", "master" ]
 
