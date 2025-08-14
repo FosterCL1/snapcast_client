@@ -108,7 +108,69 @@ def find_raucb_file(directory: str) -> str:
     raise FileNotFoundError("rootfs.raucb not found in the artifact")
 
 
-def create_distribution(base_url: str, name: str, module_id: int, username: str, password: str) -> bool:
+def get_all_targets(base_url: str, username: str, password: str) -> List[Dict]:
+    """Get all targets from Hawkbit server."""
+    targets_url = f"{base_url}/rest/v1/targets"
+    try:
+        response = requests.get(
+            targets_url,
+            auth=(username, password),
+            headers={"Accept": "application/json"},
+            params={"limit": 1000}  # Adjust limit as needed
+        )
+        response.raise_for_status()
+        return response.json().get("content", [])
+    except requests.exceptions.RequestException as e:
+        print(f"Error getting targets: {e}", file=sys.stderr)
+        return []
+
+
+def assign_distribution_to_targets(base_url: str, dist_id: int, username: str, password: str) -> bool:
+    """Assign a distribution set to all targets."""
+    targets = get_all_targets(base_url, username, password)
+    if not targets:
+        print("No targets found to assign distribution to", file=sys.stderr)
+        return False
+    
+    success_count = 0
+    
+    for target in targets:
+        target_id = target["controllerId"]
+        assign_url = f"{base_url}/rest/v1/targets/{target_id}/assignedDS"
+        
+        assign_data = {
+            "id": dist_id
+        }
+        
+        try:
+            print(f"Assigning distribution {dist_id} to target {target_id}")
+            response = requests.post(
+                assign_url,
+                auth=(username, password),
+                json=assign_data,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/hal+json"
+                }
+            )
+            
+            if response.status_code in (200, 201):
+                success_count += 1
+            else:
+                print(f"Failed to assign to {target_id}: {response.status_code} - {response.text}")
+                
+        except requests.exceptions.RequestException as e:
+            print(f"Error assigning to {target_id}: {e}")
+    
+    if success_count == 0:
+        print("Failed to assign distribution to any targets", file=sys.stderr)
+        return False
+        
+    print(f"Successfully assigned distribution to {success_count} out of {len(targets)} targets")
+    return True
+
+
+def create_distribution(base_url: str, name: str, module_id: int, username: str, password: str, assign_to_all: bool = True) -> bool:
     """Create a distribution set in Hawkbit and assign the software module to it."""
     dist_url = f"{base_url}/rest/v1/distributionsets"
     
@@ -150,6 +212,13 @@ def create_distribution(base_url: str, name: str, module_id: int, username: str,
             return False
             
         print(f"Created distribution set with ID: {dist_id}")
+        
+        # Assign to all targets if requested
+        if assign_to_all:
+            if not assign_distribution_to_targets(base_url, dist_id, username, password):
+                print("Warning: Failed to assign distribution to all targets", file=sys.stderr)
+                return False
+                
         return True
         
     except requests.exceptions.RequestException as e:
@@ -160,7 +229,7 @@ def create_distribution(base_url: str, name: str, module_id: int, username: str,
         return False
 
 
-def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: str, distribution_name: str) -> bool:
+def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: str, distribution_name: str, assign_to_all: bool = True) -> bool:
     """Upload a file to Hawkbit server and create a distribution set."""
     # First, create a software module
     module_url = f"{base_url}/rest/v1/softwaremodules"
@@ -234,9 +303,9 @@ def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: s
         
         print(f"Successfully uploaded {raucb_path} to Hawkbit server")
         
-        # Create a distribution set with the uploaded module
-        if not create_distribution(base_url, distribution_name, module_id, username, password):
-            print("Warning: Failed to create distribution set, but software module was uploaded", file=sys.stderr)
+        # Create a distribution set with the uploaded module and assign to all targets
+        if not create_distribution(base_url, distribution_name, module_id, username, password, assign_to_all):
+            print("Warning: Failed to create or assign distribution set, but software module was uploaded", file=sys.stderr)
             return False
             
         return True
@@ -273,6 +342,8 @@ def main():
     deploy_parser.add_argument("artifact_id", type=int, help="ID of the artifact to deploy")
     deploy_parser.add_argument("distribution_name", nargs='?', default="test", 
                              help="Name for the Hawkbit distribution set (default: test)")
+    deploy_parser.add_argument("--no-assign", action="store_false", dest="assign_to_all",
+                             help="Don't assign the distribution to all targets automatically")
     deploy_parser.add_argument("--token", default=os.getenv("GITHUB_TOKEN"),
                              help="GitHub token (default: $GITHUB_TOKEN)")
     deploy_parser.add_argument("--hawkbit-url", default=os.getenv("HAWKBIT_URL", "http://192.168.2.44:8080"),
@@ -340,7 +411,8 @@ def main():
                     base_url=args.hawkbit_url.rstrip('/'),
                     username=args.username,
                     password=args.password,
-                    distribution_name=args.distribution_name
+                    distribution_name=args.distribution_name,
+                    assign_to_all=args.assign_to_all
                 ):
                     sys.exit(1)
                     
