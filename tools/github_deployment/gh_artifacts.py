@@ -19,6 +19,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import zipfile
 import tempfile
 from typing import Dict, List, Optional, Tuple
@@ -170,14 +171,81 @@ def assign_distribution_to_targets(base_url: str, dist_id: int, username: str, p
     return True
 
 
-def create_distribution(base_url: str, name: str, module_id: int, username: str, password: str, assign_to_all: bool = True) -> bool:
-    """Create a distribution set in Hawkbit and assign the software module to it."""
+def find_existing_distribution(base_url: str, name: str, username: str, password: str) -> tuple[Optional[int], str]:
+    """Find an existing distribution by name and return its ID and the next version number."""
+    try:
+        # First, find all distributions with the same name
+        response = requests.get(
+            f"{base_url}/rest/v1/distributionsets",
+            auth=(username, password),
+            params={"limit": 100, "q": f"name=={name}"},
+            headers={"Accept": "application/json"}
+        )
+        
+        if response.status_code == 200:
+            content = response.json()
+            if content.get("totalElements", 0) > 0:
+                # Find the highest version number
+                versions = [float(ds["version"]) for ds in content.get("content", []) 
+                          if ds.get("version").replace('.', '').isdigit()]
+                latest_version = max(versions) if versions else 0.0
+                next_version = f"{latest_version + 1:.1f}"
+                
+                # Return the ID of the latest version and the next version number
+                latest_ds = max(content.get("content", []), 
+                              key=lambda x: float(x.get("version", "0.0")), 
+                              default=None)
+                return (latest_ds["id"], next_version) if latest_ds else (None, "1.0")
+        
+        return None, "1.0"
+        
+    except (requests.exceptions.RequestException, ValueError) as e:
+        print(f"Error searching for existing distribution: {e}", file=sys.stderr)
+        return None, "1.0"
+
+
+def create_or_update_distribution(base_url: str, name: str, module_id: int, username: str, password: str, assign_to_all: bool = True) -> bool:
+    """Create or update a distribution set in Hawkbit and assign the software module to it."""
     dist_url = f"{base_url}/rest/v1/distributionsets"
     
+    # First try to find an existing distribution with the same name and get next version
+    existing_dist_id, next_version = find_existing_distribution(base_url, name, username, password)
+    
+    if existing_dist_id:
+        print(f"Found existing distribution with ID: {existing_dist_id}, checking modules...")
+        
+        # Get existing modules
+        try:
+            response = requests.get(
+                f"{dist_url}/{existing_dist_id}/assignedModules",
+                auth=(username, password),
+                headers={"Accept": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                # If the module is already assigned, we're done
+                modules = response.json()
+                if any(module.get("id") == module_id for module in modules):
+                    print(f"Module {module_id} is already assigned to distribution {existing_dist_id}")
+                    
+                    # Assign to all targets if requested
+                    if assign_to_all and not assign_distribution_to_targets(base_url, existing_dist_id, username, password):
+                        print("Warning: Failed to assign distribution to all targets", file=sys.stderr)
+                        return False
+                    return True
+            
+            # If we get here, we need to create a new version with the updated module
+            print(f"Creating new version {next_version} of distribution {name}")
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Error checking existing distribution modules: {e}", file=sys.stderr)
+            # Continue with creating a new version
+    
+    # Create a new distribution with the next version number
     dist_data = [{
         "name": name,
-        "version": "1.0",
-        "description": f"Snapcast Client Deployment - {name}",
+        "version": next_version,
+        "description": f"Snapcast Client Deployment - {name} (v{next_version})",
         "type": "os",
         "modules": [{"id": module_id}],
         "requiredMigrationStep": False
@@ -195,6 +263,25 @@ def create_distribution(base_url: str, name: str, module_id: int, username: str,
                 "Accept": "application/json"
             }
         )
+        
+        # If we get a conflict, try with the next version number
+        if response.status_code == 409:
+            # Extract current version and increment
+            current_version = float(dist_data[0]["version"])
+            next_version = f"{current_version + 1:.1f}"
+            dist_data[0]["version"] = next_version
+            dist_data[0]["description"] = f"Snapcast Client Deployment - {name} (v{next_version})"
+            print(f"Distribution conflict, retrying with version: {next_version}")
+            
+            response = requests.post(
+                dist_url,
+                auth=(username, password),
+                json=dist_data,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                }
+            )
         
         print(f"Distribution creation response: {response.status_code}")
         print(f"Response body: {response.text}")
@@ -303,9 +390,9 @@ def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: s
         
         print(f"Successfully uploaded {raucb_path} to Hawkbit server")
         
-        # Create a distribution set with the uploaded module and assign to all targets
-        if not create_distribution(base_url, distribution_name, module_id, username, password, assign_to_all):
-            print("Warning: Failed to create or assign distribution set, but software module was uploaded", file=sys.stderr)
+        # Create or update a distribution set with the uploaded module and assign to all targets
+        if not create_or_update_distribution(base_url, distribution_name, module_id, username, password, assign_to_all):
+            print("Warning: Failed to create/update or assign distribution set, but software module was uploaded", file=sys.stderr)
             return False
             
         return True
