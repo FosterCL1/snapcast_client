@@ -2,21 +2,28 @@
 """
 GitHub Artifact Manager for snapcast_client
 
-A command-line tool to list and download GitHub Actions artifacts from FosterCL1/snapcast_client.
+A command-line tool to manage GitHub Actions artifacts and deploy to Hawkbit server.
 
 Usage:
     python gh_artifacts.py list [--token TOKEN] [--count N]
     python gh_artifacts.py download ARTIFACT_ID [--token TOKEN] [--output FILE]
+    python gh_artifacts.py deploy ARTIFACT_ID [--token TOKEN] [--hawkbit-url URL] [--username USER] [--password PASS]
 
 Environment Variables:
     GITHUB_TOKEN: Personal access token with 'actions:read' permission
+    HAWKBIT_URL: Default Hawkbit server URL (e.g., http://192.168.2.44:8080)
+    HAWKBIT_USERNAME: Default Hawkbit username
+    HAWKBIT_PASSWORD: Default Hawkbit password
 """
 import argparse
 import json
 import os
 import sys
-from typing import Dict, List, Optional
+import zipfile
+import tempfile
+from typing import Dict, List, Optional, Tuple
 import requests
+from pathlib import Path
 
 # GitHub repository details
 REPO_OWNER = "FosterCL1"
@@ -82,6 +89,109 @@ def download_artifact(artifact_id: int, token: Optional[str] = None, output_path
         return False
 
 
+def extract_zip(zip_path: str, extract_to: str = None) -> str:
+    """Extract a zip file and return the directory path."""
+    if not extract_to:
+        extract_to = tempfile.mkdtemp(prefix="artifact_")
+    
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(extract_to)
+    
+    return extract_to
+
+
+def find_raucb_file(directory: str) -> str:
+    """Find the rootfs.raucb file in the directory."""
+    for root, _, files in os.walk(directory):
+        if 'rootfs.raucb' in files:
+            return os.path.join(root, 'rootfs.raucb')
+    raise FileNotFoundError("rootfs.raucb not found in the artifact")
+
+
+def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: str) -> bool:
+    """Upload a file to Hawkbit server."""
+    # First, create a software module
+    module_url = f"{base_url}/rest/v1/softwaremodules"
+    
+    # Create a unique name based on the current timestamp
+    import time
+    timestamp = int(time.time())
+    module_name = f"snapcast_{timestamp}"
+    
+    module_data = [{
+        "name": module_name,
+        "version": "1.0",
+        "type": "os",
+        "vendor": "snapcast"
+    }]
+    
+    try:
+        # Debug: Print the request we're about to make
+        print(f"Creating software module with data: {json.dumps(module_data, indent=2)}")
+        
+        # Create software module
+        response = requests.post(
+            module_url,
+            auth=(username, password),
+            json=module_data,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+        )
+        
+        # Debug: Print the raw response
+        print(f"Response status: {response.status_code}")
+        print(f"Response body: {response.text}")
+        
+        response.raise_for_status()
+        
+        # The response should be an array of created modules
+        created_modules = response.json()
+        if not isinstance(created_modules, list) or not created_modules:
+            print("Error: Unexpected response format from server", file=sys.stderr)
+            return False
+            
+        module_id = created_modules[0].get("id")
+        if not module_id:
+            print("Error: Could not get module ID from response", file=sys.stderr)
+            return False
+            
+        print(f"Created software module with ID: {module_id}")
+        
+        # Upload artifact
+        upload_url = f"{base_url}/rest/v1/softwaremodules/{module_id}/artifacts"
+        print(f"Uploading {raucb_path} to {upload_url}")
+        
+        with open(raucb_path, 'rb') as f:
+            files = {
+                'file': (os.path.basename(raucb_path), f, 'application/octet-stream')
+            }
+            upload_response = requests.post(
+                upload_url,
+                auth=(username, password),
+                files=files,
+                headers={"Accept": "application/json"}
+            )
+            
+            # Debug: Print upload response
+            print(f"Upload response status: {upload_response.status_code}")
+            print(f"Upload response body: {upload_response.text}")
+            
+            upload_response.raise_for_status()
+        
+        print(f"Successfully uploaded {raucb_path} to Hawkbit server")
+        return True
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error in upload_to_hawkbit: {e}", file=sys.stderr)
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Response status: {e.response.status_code}", file=sys.stderr)
+            print(f"Response headers: {e.response.headers}", file=sys.stderr)
+            print(f"Response body: {e.response.text}", file=sys.stderr)
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description="Manage GitHub Actions artifacts for snapcast_client")
     subparsers = parser.add_subparsers(dest="command", required=True, help="Available commands")
@@ -99,6 +209,18 @@ def main():
     download_parser.add_argument("--token", default=os.getenv("GITHUB_TOKEN"),
                                help="GitHub token (default: $GITHUB_TOKEN)")
     download_parser.add_argument("--output", "-o", help="Output file path")
+    
+    # Deploy command
+    deploy_parser = subparsers.add_parser("deploy", help="Deploy an artifact to Hawkbit")
+    deploy_parser.add_argument("artifact_id", type=int, help="ID of the artifact to deploy")
+    deploy_parser.add_argument("--token", default=os.getenv("GITHUB_TOKEN"),
+                             help="GitHub token (default: $GITHUB_TOKEN)")
+    deploy_parser.add_argument("--hawkbit-url", default=os.getenv("HAWKBIT_URL", "http://192.168.2.44:8080"),
+                             help="Hawkbit server URL (default: $HAWKBIT_URL or http://192.168.2.44:8080)")
+    deploy_parser.add_argument("--username", default=os.getenv("HAWKBIT_USERNAME", "admin"),
+                             help="Hawkbit username (default: $HAWKBIT_USERNAME or admin)")
+    deploy_parser.add_argument("--password", default=os.getenv("HAWKBIT_PASSWORD", "admin"),
+                             help="Hawkbit password (default: $HAWKBIT_PASSWORD or admin)")
     
     args = parser.parse_args()
     
@@ -129,6 +251,41 @@ def main():
         
         if not success:
             sys.exit(1)
+    
+    elif args.command == "deploy":
+        if not args.token:
+            print("Error: GitHub token is required. Set GITHUB_TOKEN environment variable or use --token", file=sys.stderr)
+            sys.exit(1)
+        
+        # Create a temporary directory for the artifact
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Download the artifact
+            artifact_zip = os.path.join(temp_dir, f"artifact_{args.artifact_id}.zip")
+            if not download_artifact(
+                artifact_id=args.artifact_id,
+                token=args.token,
+                output_path=artifact_zip
+            ):
+                sys.exit(1)
+            
+            # Extract the artifact
+            try:
+                extract_dir = extract_zip(artifact_zip)
+                raucb_file = find_raucb_file(extract_dir)
+                print(f"Found RAUC bundle: {raucb_file}")
+                
+                # Upload to Hawkbit
+                if not upload_to_hawkbit(
+                    raucb_path=raucb_file,
+                    base_url=args.hawkbit_url.rstrip('/'),
+                    username=args.username,
+                    password=args.password
+                ):
+                    sys.exit(1)
+                    
+            except Exception as e:
+                print(f"Error during deployment: {e}", file=sys.stderr)
+                sys.exit(1)
 
 
 if __name__ == "__main__":
