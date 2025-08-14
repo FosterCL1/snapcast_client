@@ -43,16 +43,110 @@ def get_headers(token: Optional[str] = None) -> Dict[str, str]:
     return headers
 
 
+def get_commit_message(commit_url: str, token: Optional[str] = None) -> str:
+    """Get the commit message for a given commit URL."""
+    headers = get_headers(token)
+    try:
+        response = requests.get(commit_url, headers=headers)
+        response.raise_for_status()
+        commit_data = response.json()
+        return commit_data.get("commit", {}).get("message", "No commit message").split('\n')[0][:80]
+    except Exception as e:
+        print(f"  Warning: Could not get commit message: {e}", file=sys.stderr)
+        return ""
+
+def get_pr_info(pr_url: str, token: Optional[str] = None) -> str:
+    """Get PR title for a given PR URL."""
+    if not pr_url:
+        return ""
+    
+    headers = get_headers(token)
+    try:
+        response = requests.get(pr_url, headers=headers)
+        response.raise_for_status()
+        pr_data = response.json()
+        return f"PR #{pr_url.split('/')[-1]}: {pr_data.get('title', '')}"
+    except Exception as e:
+        print(f"  Warning: Could not get PR info: {e}", file=sys.stderr)
+        return ""
+
 def list_artifacts(token: Optional[str] = None, count: int = 5) -> List[Dict]:
-    """List recent workflow artifacts."""
+    """List recent workflow artifacts with detailed information."""
     url = f"{GITHUB_API}/repos/{REPO_OWNER}/{REPO_NAME}/actions/artifacts"
     headers = get_headers(token)
     
     try:
-        response = requests.get(url, headers=headers, params={"per_page": count})
+        # First get the artifacts with workflow run information
+        response = requests.get(
+            url, 
+            headers=headers, 
+            params={
+                "per_page": count,
+                "sort": "created_at",
+                "direction": "desc"
+            }
+        )
         response.raise_for_status()
-        data = response.json()
-        return data.get("artifacts", [])
+        artifacts = response.json().get("artifacts", [])
+        
+        if not artifacts:
+            print("No artifacts found.")
+            return []
+            
+        print(f"\nLast {len(artifacts)} artifacts for {REPO_OWNER}/{REPO_NAME}:\n")
+        
+        # Print header
+        print(f"{'ID':<12} {'Name':<20} {'Branch':<20} {'Commit':<10} {'Created':<19} {'Message'}")
+        print("-" * 100)
+        
+        # Get details for each artifact
+        for artifact in artifacts:
+            workflow_run = artifact.get("workflow_run", {})
+            
+            # Get commit details
+            head_branch = workflow_run.get("head_branch", "unknown")
+            head_sha = workflow_run.get("head_sha", "")[:8]  # Short SHA
+            
+            # Get commit message (first line only, truncated)
+            commit_url = f"{GITHUB_API}/repos/{REPO_OWNER}/{REPO_NAME}/commits/{head_sha}" if head_sha else ""
+            commit_msg = ""
+            if commit_url:
+                try:
+                    commit_response = requests.get(
+                        commit_url,
+                        headers=get_headers(token)
+                    )
+                    if commit_response.status_code == 200:
+                        commit_data = commit_response.json()
+                        commit_msg = commit_data.get("commit", {}).get("message", "").split('\n')[0][:50]
+                except Exception as e:
+                    commit_msg = "[Error fetching commit]"
+            
+            # Format created_at
+            created_at = ""
+            created_raw = artifact.get("created_at", "")
+            if created_raw:
+                from datetime import datetime
+                created_at = datetime.strptime(created_raw, "%Y-%m-%dT%H:%M:%SZ").strftime("%Y-%m-%d %H:%M")
+            
+            # Print the main line
+            print(f"{artifact['id']:<12} "
+                  f"{artifact.get('name', 'N/A')[:18]:<20} "
+                  f"{head_branch[:18]:<20} "
+                  f"{head_sha:<10} "
+                  f"{created_at:<19} "
+                  f"{commit_msg}")
+            
+            # Print any PR info if available
+            prs = workflow_run.get("pull_requests", [])
+            if prs:
+                pr = prs[0]
+                pr_number = pr.get("number")
+                if pr_number:
+                    pr_url = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/pull/{pr_number}"
+                    print(f"{'':<12} {'':<20} {'PR #' + str(pr_number):<20} {'':<10} {'':<19} {pr_url}")
+            
+        return artifacts
     except requests.exceptions.RequestException as e:
         print(f"Error fetching artifacts: {e}", file=sys.stderr)
         if hasattr(e, 'response') and e.response is not None:
@@ -443,19 +537,10 @@ def main():
     args = parser.parse_args()
     
     if args.command == "list":
-        artifacts = list_artifacts(token=args.token, count=args.count)
-        if not artifacts:
+        if not list_artifacts(token=args.token, count=args.count):
             print("No artifacts found or error occurred.")
             return
             
-        print(f"\nLast {len(artifacts)} artifacts for {REPO_OWNER}/{REPO_NAME}:\n")
-        print(f"{'ID':<10} {'Name':<30} {'Workflow':<30} {'Created At'}")
-        print("-" * 80)
-        
-        for art in artifacts:
-            workflow = art["workflow_run"]["head_sha"][:7] if art.get("workflow_run") else "N/A"
-            print(f"{art['id']:<10} {art['name'][:28]:<30} {workflow:<30} {art['created_at'].split('T')[0]}")
-    
     elif args.command == "download":
         if not args.token:
             print("Error: GitHub token is required. Set GITHUB_TOKEN environment variable or use --token", file=sys.stderr)
