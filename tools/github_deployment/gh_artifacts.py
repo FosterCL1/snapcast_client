@@ -266,35 +266,88 @@ def assign_distribution_to_targets(base_url: str, dist_id: int, username: str, p
 
 
 def find_existing_distribution(base_url: str, name: str, username: str, password: str) -> tuple[Optional[int], str]:
-    """Find an existing distribution by name and return its ID and the next version number."""
+    """
+    Find an existing distribution by name and return its ID and the next available version number.
+    Handles version conflicts by finding the next available version number.
+    """
     try:
-        # First, find all distributions with the same name
-        response = requests.get(
-            f"{base_url}/rest/v1/distributionsets",
-            auth=(username, password),
-            params={"limit": 100, "q": f"name=={name}"},
-            headers={"Accept": "application/json"}
-        )
+        # First, get all distributions with the same name
+        all_ds = []
+        page = 0
+        page_size = 50
         
-        if response.status_code == 200:
-            content = response.json()
-            if content.get("totalElements", 0) > 0:
-                # Find the highest version number
-                versions = [float(ds["version"]) for ds in content.get("content", []) 
-                          if ds.get("version").replace('.', '').isdigit()]
-                latest_version = max(versions) if versions else 0.0
-                next_version = f"{latest_version + 1:.1f}"
+        while True:
+            # First, get the list of distribution sets with the given name
+            list_url = f"{base_url}/rest/v1/distributionsets"
+            list_params = {
+                "limit": page_size,
+                "offset": page * page_size,
+                "q": f"name=={name}"
+            }
+            
+            list_response = requests.get(
+                list_url,
+                auth=(username, password),
+                params=list_params,
+                headers={"Accept": "application/json"}
+            )
+            list_response.raise_for_status()
+            
+            content = list_response.json()
+            if not content.get("content"):
+                break
                 
-                # Return the ID of the latest version and the next version number
-                latest_ds = max(content.get("content", []), 
-                              key=lambda x: float(x.get("version", "0.0")), 
-                              default=None)
-                return (latest_ds["id"], next_version) if latest_ds else (None, "1.0")
+            all_ds.extend(content["content"])
+            
+            # Check if there are more pages
+            if (page + 1) * page_size >= content.get("totalElements", 0):
+                break
+            page += 1
         
+        if not all_ds:
+            return None, "1.0"
+        
+        # Extract and parse versions
+        versions = []
+        latest_ds = None
+        latest_version = 0.0
+        
+        for ds in all_ds:
+            try:
+                version_str = ds.get("version", "0.0")
+                # Handle both string and numeric versions
+                version = float(version_str) if str(version_str).replace('.', '').isdigit() else 0.0
+                versions.append(version)
+                
+                # Track the distribution with the highest version
+                if version > latest_version:
+                    latest_version = version
+                    latest_ds = ds
+            except (ValueError, AttributeError):
+                continue
+        
+        if not versions:  # No valid versions found
+            return None, "1.0"
+        
+        # Find the next available version
+        versions_sorted = sorted(versions, reverse=True)
+        next_version = versions_sorted[0] + 1.0
+        
+        # Check if the next version already exists (just in case)
+        while next_version in versions:
+            next_version += 1.0
+        
+        # Return the latest distribution ID (if any) and the next version
+        return (latest_ds["id"], f"{next_version:.1f}") if latest_ds else (None, f"{next_version:.1f}")
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error searching for distributions: {e}", file=sys.stderr)
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Response status: {e.response.status_code}", file=sys.stderr)
+            print(f"Response body: {e.response.text}", file=sys.stderr)
         return None, "1.0"
-        
-    except (requests.exceptions.RequestException, ValueError) as e:
-        print(f"Error searching for existing distribution: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"Unexpected error finding distributions: {e}", file=sys.stderr)
         return None, "1.0"
 
 
