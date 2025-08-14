@@ -108,8 +108,60 @@ def find_raucb_file(directory: str) -> str:
     raise FileNotFoundError("rootfs.raucb not found in the artifact")
 
 
-def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: str) -> bool:
-    """Upload a file to Hawkbit server."""
+def create_distribution(base_url: str, name: str, module_id: int, username: str, password: str) -> bool:
+    """Create a distribution set in Hawkbit and assign the software module to it."""
+    dist_url = f"{base_url}/rest/v1/distributionsets"
+    
+    dist_data = [{
+        "name": name,
+        "version": "1.0",
+        "description": f"Snapcast Client Deployment - {name}",
+        "type": "os",
+        "modules": [{"id": module_id}],
+        "requiredMigrationStep": False
+    }]
+    
+    try:
+        print(f"Creating distribution set with data: {json.dumps(dist_data, indent=2)}")
+        
+        response = requests.post(
+            dist_url,
+            auth=(username, password),
+            json=dist_data,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+        )
+        
+        print(f"Distribution creation response: {response.status_code}")
+        print(f"Response body: {response.text}")
+        
+        response.raise_for_status()
+        
+        created_dists = response.json()
+        if not isinstance(created_dists, list) or not created_dists:
+            print("Error: Unexpected response format for distribution creation", file=sys.stderr)
+            return False
+            
+        dist_id = created_dists[0].get("id")
+        if not dist_id:
+            print("Error: Could not get distribution ID from response", file=sys.stderr)
+            return False
+            
+        print(f"Created distribution set with ID: {dist_id}")
+        return True
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error creating distribution: {e}", file=sys.stderr)
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Response status: {e.response.status_code}", file=sys.stderr)
+            print(f"Response body: {e.response.text}", file=sys.stderr)
+        return False
+
+
+def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: str, distribution_name: str) -> bool:
+    """Upload a file to Hawkbit server and create a distribution set."""
     # First, create a software module
     module_url = f"{base_url}/rest/v1/softwaremodules"
     
@@ -181,6 +233,12 @@ def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: s
             upload_response.raise_for_status()
         
         print(f"Successfully uploaded {raucb_path} to Hawkbit server")
+        
+        # Create a distribution set with the uploaded module
+        if not create_distribution(base_url, distribution_name, module_id, username, password):
+            print("Warning: Failed to create distribution set, but software module was uploaded", file=sys.stderr)
+            return False
+            
         return True
         
     except requests.exceptions.RequestException as e:
@@ -213,6 +271,7 @@ def main():
     # Deploy command
     deploy_parser = subparsers.add_parser("deploy", help="Deploy an artifact to Hawkbit")
     deploy_parser.add_argument("artifact_id", type=int, help="ID of the artifact to deploy")
+    deploy_parser.add_argument("distribution_name", help="Name for the Hawkbit distribution set")
     deploy_parser.add_argument("--token", default=os.getenv("GITHUB_TOKEN"),
                              help="GitHub token (default: $GITHUB_TOKEN)")
     deploy_parser.add_argument("--hawkbit-url", default=os.getenv("HAWKBIT_URL", "http://192.168.2.44:8080"),
@@ -274,12 +333,13 @@ def main():
                 raucb_file = find_raucb_file(extract_dir)
                 print(f"Found RAUC bundle: {raucb_file}")
                 
-                # Upload to Hawkbit
+                # Upload to Hawkbit and create distribution
                 if not upload_to_hawkbit(
                     raucb_path=raucb_file,
                     base_url=args.hawkbit_url.rstrip('/'),
                     username=args.username,
-                    password=args.password
+                    password=args.password,
+                    distribution_name=args.distribution_name
                 ):
                     sys.exit(1)
                     
