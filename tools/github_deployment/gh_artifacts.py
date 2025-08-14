@@ -271,7 +271,8 @@ def main():
     # Deploy command
     deploy_parser = subparsers.add_parser("deploy", help="Deploy an artifact to Hawkbit")
     deploy_parser.add_argument("artifact_id", type=int, help="ID of the artifact to deploy")
-    deploy_parser.add_argument("distribution_name", help="Name for the Hawkbit distribution set")
+    deploy_parser.add_argument("distribution_name", nargs='?', default="test", 
+                             help="Name for the Hawkbit distribution set (default: test)")
     deploy_parser.add_argument("--token", default=os.getenv("GITHUB_TOKEN"),
                              help="GitHub token (default: $GITHUB_TOKEN)")
     deploy_parser.add_argument("--hawkbit-url", default=os.getenv("HAWKBIT_URL", "http://192.168.2.44:8080"),
