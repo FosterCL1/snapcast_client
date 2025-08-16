@@ -33,7 +33,7 @@ jobs:
           # Move into the submodule directory, make sure correct branch is tracked
           pushd buildroot
           git fetch origin 2025.05.x --depth=1
-          NEW_SHA=$(git rev-parse origin/2025.05)
+          NEW_SHA=$(git rev-parse origin/2025.05.x)
           CUR_SHA=$(git rev-parse HEAD)
           echo "Current SHA: $CUR_SHA"
           echo "Latest  SHA: $NEW_SHA"
