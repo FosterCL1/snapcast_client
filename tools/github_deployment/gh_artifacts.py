@@ -203,7 +203,7 @@ def find_raucb_file(directory: str) -> str:
     raise FileNotFoundError("rootfs.raucb not found in the artifact")
 
 
-def get_all_targets(base_url: str, username: str, password: str) -> List[Dict]:
+def get_all_targets(base_url: str, username: str, password: str, verbose: bool = False) -> List[Dict]:
     """Get all targets from Hawkbit server."""
     targets_url = f"{base_url}/rest/v1/targets"
     try:
@@ -220,9 +220,9 @@ def get_all_targets(base_url: str, username: str, password: str) -> List[Dict]:
         return []
 
 
-def assign_distribution_to_targets(base_url: str, dist_id: int, username: str, password: str) -> bool:
+def assign_distribution_to_targets(base_url: str, dist_id: int, username: str, password: str, verbose: bool = False) -> bool:
     """Assign a distribution set to all targets."""
-    targets = get_all_targets(base_url, username, password)
+    targets = get_all_targets(base_url, username, password, verbose=verbose)
     if not targets:
         print("No targets found to assign distribution to", file=sys.stderr)
         return False
@@ -238,7 +238,7 @@ def assign_distribution_to_targets(base_url: str, dist_id: int, username: str, p
         }
         
         try:
-            print(f"Assigning distribution {dist_id} to target {target_id}")
+            vprint(verbose, f"Assigning distribution {dist_id} to target {target_id}")
             response = requests.post(
                 assign_url,
                 auth=(username, password),
@@ -261,11 +261,12 @@ def assign_distribution_to_targets(base_url: str, dist_id: int, username: str, p
         print("Failed to assign distribution to any targets", file=sys.stderr)
         return False
         
-    print(f"Successfully assigned distribution to {success_count} out of {len(targets)} targets")
+    if verbose or success_count == 0:
+        print(f"Successfully assigned distribution to {success_count} out of {len(targets)} targets")
     return True
 
 
-def find_existing_distribution(base_url: str, name: str, username: str, password: str) -> tuple[Optional[int], str]:
+def find_existing_distribution(base_url: str, name: str, username: str, password: str, verbose: bool = False) -> tuple[Optional[int], str]:
     """
     Find an existing distribution by name and return its ID and the next available version number.
     Handles version conflicts by finding the next available version number.
@@ -351,15 +352,15 @@ def find_existing_distribution(base_url: str, name: str, username: str, password
         return None, "1.0"
 
 
-def create_or_update_distribution(base_url: str, name: str, module_id: int, username: str, password: str, assign_to_all: bool = True) -> bool:
+def create_or_update_distribution(base_url: str, name: str, module_id: int, username: str, password: str, assign_to_all: bool = True, verbose: bool = False) -> bool:
     """Create or update a distribution set in Hawkbit and assign the software module to it."""
     dist_url = f"{base_url}/rest/v1/distributionsets"
     
     # First try to find an existing distribution with the same name and get next version
-    existing_dist_id, next_version = find_existing_distribution(base_url, name, username, password)
+    existing_dist_id, next_version = find_existing_distribution(base_url, name, username, password, verbose=verbose)
     
     if existing_dist_id:
-        print(f"Found existing distribution with ID: {existing_dist_id}, checking modules...")
+        vprint(verbose, f"Found existing distribution with ID: {existing_dist_id}, checking modules...")
         
         # Get existing modules
         try:
@@ -373,16 +374,16 @@ def create_or_update_distribution(base_url: str, name: str, module_id: int, user
                 # If the module is already assigned, we're done
                 modules = response.json()
                 if any(module.get("id") == module_id for module in modules):
-                    print(f"Module {module_id} is already assigned to distribution {existing_dist_id}")
+                    vprint(verbose, f"Module {module_id} is already assigned to distribution {existing_dist_id}")
                     
                     # Assign to all targets if requested
-                    if assign_to_all and not assign_distribution_to_targets(base_url, existing_dist_id, username, password):
+                    if assign_to_all and not assign_distribution_to_targets(base_url, existing_dist_id, username, password, verbose=verbose):
                         print("Warning: Failed to assign distribution to all targets", file=sys.stderr)
                         return False
                     return True
             
             # If we get here, we need to create a new version with the updated module
-            print(f"Creating new version {next_version} of distribution {name}")
+            vprint(verbose, f"Creating new version {next_version} of distribution {name}")
             
         except requests.exceptions.RequestException as e:
             print(f"Error checking existing distribution modules: {e}", file=sys.stderr)
@@ -399,7 +400,7 @@ def create_or_update_distribution(base_url: str, name: str, module_id: int, user
     }]
     
     try:
-        print(f"Creating distribution set with data: {json.dumps(dist_data, indent=2)}")
+        vprint(verbose, f"Creating distribution set with data: {json.dumps(dist_data, indent=2)}")
         
         response = requests.post(
             dist_url,
@@ -418,7 +419,7 @@ def create_or_update_distribution(base_url: str, name: str, module_id: int, user
             next_version = f"{current_version + 1:.1f}"
             dist_data[0]["version"] = next_version
             dist_data[0]["description"] = f"Snapcast Client Deployment - {name} (v{next_version})"
-            print(f"Distribution conflict, retrying with version: {next_version}")
+            vprint(verbose, f"Distribution conflict, retrying with version: {next_version}")
             
             response = requests.post(
                 dist_url,
@@ -430,8 +431,8 @@ def create_or_update_distribution(base_url: str, name: str, module_id: int, user
                 }
             )
         
-        print(f"Distribution creation response: {response.status_code}")
-        print(f"Response body: {response.text}")
+        vprint(verbose, f"Distribution creation response: {response.status_code}")
+        vprint(verbose, f"Response body: {response.text}")
         
         response.raise_for_status()
         
@@ -445,11 +446,11 @@ def create_or_update_distribution(base_url: str, name: str, module_id: int, user
             print("Error: Could not get distribution ID from response", file=sys.stderr)
             return False
             
-        print(f"Created distribution set with ID: {dist_id}")
+        vprint(verbose, f"Created distribution set with ID: {dist_id}")
         
         # Assign to all targets if requested
         if assign_to_all:
-            if not assign_distribution_to_targets(base_url, dist_id, username, password):
+            if not assign_distribution_to_targets(base_url, dist_id, username, password, verbose=verbose):
                 print("Warning: Failed to assign distribution to all targets", file=sys.stderr)
                 return False
                 
@@ -463,7 +464,7 @@ def create_or_update_distribution(base_url: str, name: str, module_id: int, user
         return False
 
 
-def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: str, distribution_name: str, assign_to_all: bool = True) -> bool:
+def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: str, distribution_name: str, assign_to_all: bool = True, verbose: bool = False) -> bool:
     """Upload a file to Hawkbit server and create a distribution set."""
     # First, create a software module
     module_url = f"{base_url}/rest/v1/softwaremodules"
@@ -472,6 +473,10 @@ def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: s
     import time
     timestamp = int(time.time())
     module_name = f"snapcast_{timestamp}"
+    
+    # Set verbose flag for nested function calls
+    global vprint_verbose
+    vprint_verbose = verbose
     
     module_data = [{
         "name": module_name,
@@ -482,7 +487,7 @@ def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: s
     
     try:
         # Debug: Print the request we're about to make
-        print(f"Creating software module with data: {json.dumps(module_data, indent=2)}")
+        vprint(verbose, f"Creating software module with data: {json.dumps(module_data, indent=2)}")
         
         # Create software module
         response = requests.post(
@@ -495,9 +500,8 @@ def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: s
             }
         )
         
-        # Debug: Print the raw response
-        print(f"Response status: {response.status_code}")
-        print(f"Response body: {response.text}")
+        vprint(verbose, f"Response status: {response.status_code}")
+        vprint(verbose, f"Response body: {response.text}")
         
         response.raise_for_status()
         
@@ -512,11 +516,11 @@ def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: s
             print("Error: Could not get module ID from response", file=sys.stderr)
             return False
             
-        print(f"Created software module with ID: {module_id}")
+        vprint(verbose, f"Created software module with ID: {module_id}")
         
         # Upload artifact
         upload_url = f"{base_url}/rest/v1/softwaremodules/{module_id}/artifacts"
-        print(f"Uploading {raucb_path} to {upload_url}")
+        vprint(verbose, f"Uploading {raucb_path} to {upload_url}")
         
         with open(raucb_path, 'rb') as f:
             files = {
@@ -529,9 +533,8 @@ def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: s
                 headers={"Accept": "application/json"}
             )
             
-            # Debug: Print upload response
-            print(f"Upload response status: {upload_response.status_code}")
-            print(f"Upload response body: {upload_response.text}")
+            vprint(verbose, f"Upload response status: {upload_response.status_code}")
+            vprint(verbose, f"Upload response body: {upload_response.text}")
             
             upload_response.raise_for_status()
         
@@ -553,8 +556,16 @@ def upload_to_hawkbit(raucb_path: str, base_url: str, username: str, password: s
         return False
 
 
+def vprint(verbose, *args, **kwargs):
+    """Print only if verbose is True"""
+    if verbose:
+        print(*args, **kwargs)
+
+
 def main():
+    # Main parser with global arguments
     parser = argparse.ArgumentParser(description="Manage GitHub Actions artifacts for snapcast_client")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     subparsers = parser.add_subparsers(dest="command", required=True, help="Available commands")
     
     # List command
@@ -628,7 +639,7 @@ def main():
             try:
                 extract_dir = extract_zip(artifact_zip)
                 raucb_file = find_raucb_file(extract_dir)
-                print(f"Found RAUC bundle: {raucb_file}")
+                vprint(args.verbose, f"Found RAUC bundle: {raucb_file}")
                 
                 # Upload to Hawkbit and create distribution
                 if not upload_to_hawkbit(
@@ -637,7 +648,8 @@ def main():
                     username=args.username,
                     password=args.password,
                     distribution_name=args.distribution_name,
-                    assign_to_all=args.assign_to_all
+                    assign_to_all=args.assign_to_all,
+                    verbose=args.verbose
                 ):
                     sys.exit(1)
                     
