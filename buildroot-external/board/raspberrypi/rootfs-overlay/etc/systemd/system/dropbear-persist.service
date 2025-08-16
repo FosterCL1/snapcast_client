@@ -1,0 +1,20 @@
+[Unit]
+Description=Prepare and mount persistent dropbear host keys
+Before=dropbear.service
+After=local-fs.target
+Requires=local-fs.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/bin/mkdir -p /data/persist/etc/dropbear
+
+# Generate keys if they don't exist
+ExecStart=/bin/sh -c '[ -f /data/persist/etc/dropbear/dropbear_ed25519_host_key ] || dropbearkey -t ed25519 -f /data/persist/etc/dropbear/dropbear_ed25519_host_key'
+
+# Bind mount the persistent directory
+ExecStart=/bin/mount --bind /data/persist/etc/dropbear /etc/dropbear
+
+[Install]
+WantedBy=multi-user.target
