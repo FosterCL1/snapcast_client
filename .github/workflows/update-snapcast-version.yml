@@ -77,17 +77,27 @@ jobs:
           # Push the branch
           git push -u origin ${{ steps.version.outputs.branch_name }}
           
-          # Create PR using GitHub CLI with authentication
-          gh auth login --with-token <<< "${{ secrets.GH_PAT }}"
-          
           # Get the current version from the file for the PR body
           CURRENT_VERSION=$(grep 'SNAPCAST_VERSION = ' buildroot-external/package/snapcast/snapcast.mk | cut -d'=' -f2 | xargs)
           
-          # Create PR
-          gh pr create \
-            --title "Update Snapcast to ${{ steps.version.outputs.new_version }}" \
-            --body "This PR updates Snapcast from $CURRENT_VERSION to ${{ steps.version.outputs.new_version }}" \
-            --base main \
-            --head ${{ steps.version.outputs.branch_name }}
+          # Create PR using the GitHub API directly with the token
+          PR_RESPONSE=$(curl -s -X POST \
+            -H "Authorization: token ${{ secrets.GH_PAT }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls" \
+            -d '{
+              "title": "Update Snapcast to ${{ steps.version.outputs.new_version }}",
+              "body": "This PR updates Snapcast from $CURRENT_VERSION to ${{ steps.version.outputs.new_version }}",
+              "head": "${{ steps.version.outputs.branch_name }}",
+              "base": "main"
+            }')
+          
+          # Check if PR was created successfully
+          if echo "$PR_RESPONSE" | grep -q '"number"'; then
+            echo "PR created successfully"
+          else
+            echo "Error creating PR: $PR_RESPONSE"
+            exit 1
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
