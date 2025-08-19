@@ -12,6 +12,12 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      id-token: write  # Needed for OIDC token
+
+    # These permissions are needed to interact with GitHub's OIDC Token endpoint.
+    # permissions:
+    #   id-token: write
+    #   contents: read
 
     steps:
       - name: Checkout repository
@@ -65,6 +71,12 @@ jobs:
           # Push the branch
           git push -u origin ${{ steps.version.outputs.branch_name }}
           
+          # Create PR using GitHub CLI with authentication
+          gh auth login --with-token <<< "${{ secrets.GH_PAT }}"
+          
+          # Get the current version from the file for the PR body
+          CURRENT_VERSION=$(grep 'SNAPCAST_VERSION = ' buildroot-external/package/snapcast/snapcast.mk | cut -d'=' -f2 | xargs)
+          
           # Create PR
           gh pr create \
             --title "Update Snapcast to ${{ steps.version.outputs.new_version }}" \
@@ -72,4 +84,4 @@ jobs:
             --base main \
             --head ${{ steps.version.outputs.branch_name }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
