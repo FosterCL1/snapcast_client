@@ -58,6 +58,12 @@ jobs:
       - name: Update version and create PR
         if: steps.version.outputs.version_changed == 'true'
         run: |
+          # Check if branch already exists
+          if git show-ref --verify --quiet refs/remotes/origin/${{ steps.version.outputs.branch_name }}; then
+            echo "Branch ${{ steps.version.outputs.branch_name }} already exists, skipping PR creation"
+            exit 0
+          fi
+          
           # Create a new branch
           git checkout -b ${{ steps.version.outputs.branch_name }}
           
