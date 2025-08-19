@@ -81,16 +81,22 @@ jobs:
           CURRENT_VERSION=$(grep 'SNAPCAST_VERSION = ' buildroot-external/package/snapcast/snapcast.mk | cut -d'=' -f2 | xargs)
           
           # Create PR using the GitHub API directly with the token
+          PR_BODY=$(cat << EOF
+          {
+            "title": "Update Snapcast to ${{ steps.version.outputs.new_version }}",
+            "body": "This PR updates Snapcast from $CURRENT_VERSION to ${{ steps.version.outputs.new_version }}",
+            "head": "${{ steps.version.outputs.branch_name }}",
+            "base": "main"
+          }
+          EOF
+          )
+          
           PR_RESPONSE=$(curl -s -X POST \
             -H "Authorization: token ${{ secrets.GH_PAT }}" \
             -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls" \
-            -d '{
-              "title": "Update Snapcast to ${{ steps.version.outputs.new_version }}",
-              "body": "This PR updates Snapcast from $CURRENT_VERSION to ${{ steps.version.outputs.new_version }}",
-              "head": "${{ steps.version.outputs.branch_name }}",
-              "base": "main"
-            }')
+            -H "Content-Type: application/json" \
+            -d "$PR_BODY" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls")
           
           # Check if PR was created successfully
           if echo "$PR_RESPONSE" | grep -q '"number"'; then
