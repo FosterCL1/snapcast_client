@@ -8,13 +8,36 @@ DefaultDependencies=no
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+
+# Create necessary directories with proper permissions
 ExecStartPre=/bin/mkdir -p /data/persist/etc/dropbear
+ExecStartPre=/bin/chmod 700 /data/persist/etc/dropbear
 
 # Generate keys if they don't exist
-ExecStart=/bin/sh -c '[ -f /data/persist/etc/dropbear/dropbear_ed25519_host_key ] || dropbearkey -t ed25519 -f /data/persist/etc/dropbear/dropbear_ed25519_host_key'
-
-# Bind mount the persistent directory
-ExecStart=/bin/mount --bind /data/persist/etc/dropbear /etc/dropbear
+ExecStart=/bin/sh -c '\
+    # Generate ED25519 key if it doesn\'t exist
+    if [ ! -f /data/persist/etc/dropbear/dropbear_ed25519_host_key ]; then \
+        echo "Generating ED25519 host key..."; \
+        /usr/bin/dropbearkey -t ed25519 -f /data/persist/etc/dropbear/dropbear_ed25519_host_key; \
+        /bin/chmod 600 /data/persist/etc/dropbear/dropbear_ed25519_host_key; \
+    fi; \
+    # Generate RSA key if it doesn\'t exist (for better compatibility)
+    if [ ! -f /data/persist/etc/dropbear/dropbear_rsa_host_key ]; then \
+        echo "Generating RSA host key..."; \
+        /usr/bin/dropbearkey -t rsa -s 4096 -f /data/persist/etc/dropbear/dropbear_rsa_host_key; \
+        /bin/chmod 600 /data/persist/etc/dropbear/dropbear_rsa_host_key; \
+    fi; \
+    # Ensure /etc/dropbear exists
+    /bin/mkdir -p /etc/dropbear; \
+    # Try to unmount first in case of previous failed attempts
+    /bin/umount /etc/dropbear 2>/dev/null || true; \
+    # Bind mount the persistent directory
+    if ! /bin/mount --bind /data/persist/etc/dropbear /etc/dropbear; then \
+        echo "Failed to mount /etc/dropbear"; \
+        exit 1; \
+    fi; \
+    echo "Successfully mounted persistent dropbear keys"
+'
 
 [Install]
 WantedBy=multi-user.target
