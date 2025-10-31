@@ -60,7 +60,7 @@ jobs:
       - name: Commit submodule update
         if: steps.update.outputs.changed == 'true'
         run: |
-          git commit -m "chore: update buildroot submodule to ${LATEST_TAG}"
+          git commit -m "chore: update buildroot submodule to ${{ steps.update.outputs.latest_tag }}"
 
       - name: Create Pull Request
         if: steps.update.outputs.changed == 'true'
