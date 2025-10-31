@@ -70,6 +70,29 @@ def get_pr_info(pr_url: str, token: Optional[str] = None) -> str:
         print(f"  Warning: Could not get PR info: {e}", file=sys.stderr)
         return ""
 
+def format_relative_time(timestamp_str: str) -> str:
+    """Convert ISO timestamp to relative time (e.g., '2 hours ago')."""
+    from datetime import datetime, timezone
+    try:
+        created = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        delta = now - created
+        
+        seconds = delta.total_seconds()
+        if seconds < 60:
+            return "just now"
+        elif seconds < 3600:
+            minutes = int(seconds / 60)
+            return f"{minutes}m ago"
+        elif seconds < 86400:
+            hours = int(seconds / 3600)
+            return f"{hours}h ago"
+        else:
+            days = int(seconds / 86400)
+            return f"{days}d ago"
+    except Exception:
+        return "unknown"
+
 def list_artifacts(token: Optional[str] = None, count: int = 5) -> List[Dict]:
     """List recent workflow artifacts with detailed information."""
     url = f"{GITHUB_API}/repos/{REPO_OWNER}/{REPO_NAME}/actions/artifacts"
@@ -96,7 +119,7 @@ def list_artifacts(token: Optional[str] = None, count: int = 5) -> List[Dict]:
         print(f"\nLast {len(artifacts)} artifacts for {REPO_OWNER}/{REPO_NAME}:\n")
         
         # Print header
-        print(f"{'ID':<12} {'Name':<20} {'Branch':<20} {'Commit':<10} {'Created':<19} {'Message'}")
+        print(f"{'ID':<12} {'Branch':<20} {'Commit':<10} {'Age':<12} {'Message'}")
         print("-" * 100)
         
         # Get details for each artifact
@@ -122,19 +145,15 @@ def list_artifacts(token: Optional[str] = None, count: int = 5) -> List[Dict]:
                 except Exception as e:
                     commit_msg = "[Error fetching commit]"
             
-            # Format created_at
-            created_at = ""
+            # Format relative time
             created_raw = artifact.get("created_at", "")
-            if created_raw:
-                from datetime import datetime
-                created_at = datetime.strptime(created_raw, "%Y-%m-%dT%H:%M:%SZ").strftime("%Y-%m-%d %H:%M")
+            relative_time = format_relative_time(created_raw) if created_raw else "unknown"
             
             # Print the main line
             print(f"{artifact['id']:<12} "
-                  f"{artifact.get('name', 'N/A')[:18]:<20} "
                   f"{head_branch[:18]:<20} "
                   f"{head_sha:<10} "
-                  f"{created_at:<19} "
+                  f"{relative_time:<12} "
                   f"{commit_msg}")
             
             # Print any PR info if available
@@ -144,7 +163,7 @@ def list_artifacts(token: Optional[str] = None, count: int = 5) -> List[Dict]:
                 pr_number = pr.get("number")
                 if pr_number:
                     pr_url = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/pull/{pr_number}"
-                    print(f"{'':<12} {'':<20} {'PR #' + str(pr_number):<20} {'':<10} {'':<19} {pr_url}")
+                    print(f"{'':<12} {'PR #' + str(pr_number):<20} {'':<10} {'':<12} {pr_url}")
             
         return artifacts
     except requests.exceptions.RequestException as e:
