@@ -25,24 +25,31 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Ensure buildroot submodule is on 2025.05.x branch & fetch latest
+      - name: Ensure buildroot submodule tracks latest release tag
         id: update
         shell: bash
         run: |
           set -euo pipefail
-          # Move into the submodule directory, make sure correct branch is tracked
+          # Move into the submodule directory, discover latest release tag
           pushd buildroot
-          git fetch origin 2025.05.x --depth=1
-          NEW_SHA=$(git rev-parse origin/2025.05.x)
+          # Fetch tags from origin and determine the newest release tag (e.g., 2025.08.1)
+          git fetch --tags --force --depth=1 origin "refs/tags/*:refs/tags/*"
+          LATEST_TAG=$(git tag -l --sort=-version:refname | grep -E '^[0-9]{4}\.[0-9]{2}(\.[0-9]+)?$' | head -n1)
+          if [ -z "${LATEST_TAG:-}" ]; then
+            echo "Failed to detect latest Buildroot release tag" >&2
+            exit 1
+          fi
+          NEW_SHA=$(git rev-list -n1 "$LATEST_TAG")
           CUR_SHA=$(git rev-parse HEAD)
           echo "Current SHA: $CUR_SHA"
-          echo "Latest  SHA: $NEW_SHA"
+          echo "Latest  Tag: $LATEST_TAG -> $NEW_SHA"
           if [ "$NEW_SHA" = "$CUR_SHA" ]; then
-            echo "::set-output name=changed::false"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            git checkout $NEW_SHA
-            echo "::set-output name=changed::true"
+            git checkout "$NEW_SHA"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+          echo "latest_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
           popd
 
           # Stage submodule pointer if it changed
@@ -53,16 +60,16 @@ jobs:
       - name: Commit submodule update
         if: steps.update.outputs.changed == 'true'
         run: |
-          git commit -m "chore: update buildroot submodule to latest 2025.05.x"
+          git commit -m "chore: update buildroot submodule to ${LATEST_TAG}"
 
       - name: Create Pull Request
         if: steps.update.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
-          title: "chore: Update buildroot submodule (2025.05.x)"
+          title: "chore: Update buildroot submodule to ${{ steps.update.outputs.latest_tag }}"
           body: |
-            Automated nightly PR to update the buildroot submodule to the latest commit on the 2025.05.x branch.
-          commit-message: "chore: update buildroot submodule to latest 2025.05.x"
-          branch: buildroot-update-2025.05.x
+            Automated nightly PR to update the buildroot submodule to the latest Buildroot release tag: ${{ steps.update.outputs.latest_tag }}.
+          commit-message: "chore: update buildroot submodule to ${{ steps.update.outputs.latest_tag }}"
+          branch: buildroot-update-${{ steps.update.outputs.latest_tag }}
           delete-branch: true
           token: ${{ secrets.GITHUB_TOKEN }}
