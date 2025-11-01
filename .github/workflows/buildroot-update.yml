@@ -64,6 +64,7 @@ jobs:
 
       - name: Create Pull Request
         if: steps.update.outputs.changed == 'true'
+        id: create-pr
         uses: peter-evans/create-pull-request@v6
         with:
           title: "chore: Update buildroot submodule to ${{ steps.update.outputs.latest_tag }}"
@@ -73,3 +74,14 @@ jobs:
           branch: buildroot-update-${{ steps.update.outputs.latest_tag }}
           delete-branch: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger Build Workflow
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "A buildroot update PR has been created: ${{ steps.create-pr.outputs.pull-request-url }}"
+          echo "Triggering build workflow for branch: buildroot-update-${{ steps.update.outputs.latest_tag }}"
+          gh workflow run build.yml \
+            --ref buildroot-update-${{ steps.update.outputs.latest_tag }} \
+            -f branch=buildroot-update-${{ steps.update.outputs.latest_tag }}

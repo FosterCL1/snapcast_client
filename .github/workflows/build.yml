@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to build (leave empty for default branch)'
+        required: false
+        type: string
 
 jobs:
   build:
@@ -15,6 +20,7 @@ jobs:
       - name: Checkout repository (with submodules)
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.branch || github.ref }}
           submodules: recursive
 
       - name: Install Buildroot dependencies
