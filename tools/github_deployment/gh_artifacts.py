@@ -8,6 +8,7 @@ Usage:
     python gh_artifacts.py list [--token TOKEN] [--count N]
     python gh_artifacts.py download ARTIFACT_ID [--token TOKEN] [--output FILE]
     python gh_artifacts.py deploy ARTIFACT_ID [--token TOKEN] [--hawkbit-url URL] [--username USER] [--password PASS]
+    python gh_artifacts.py status [--hawkbit-url URL] [--username USER] [--password PASS]
 
 Environment Variables:
     GITHUB_TOKEN: Personal access token with 'actions:read' permission
@@ -237,6 +238,142 @@ def get_all_targets(base_url: str, username: str, password: str, verbose: bool =
     except requests.exceptions.RequestException as e:
         print(f"Error getting targets: {e}", file=sys.stderr)
         return []
+
+
+def get_target_status(base_url: str, target_id: str, username: str, password: str, verbose: bool = False) -> Dict:
+    """Get detailed status for a specific target including current and requested versions."""
+    target_url = f"{base_url}/rest/v1/targets/{target_id}"
+    try:
+        response = requests.get(
+            target_url,
+            auth=(username, password),
+            headers={"Accept": "application/json"}
+        )
+        response.raise_for_status()
+        target_data = response.json()
+        
+        # Debug: Print raw response if verbose
+        if verbose:
+            print(f"\nDebug - Raw API response for {target_id}:")
+            print(json.dumps(target_data, indent=2))
+        
+        # Extract version information
+        status = {
+            "controllerId": target_data.get("controllerId", "unknown"),
+            "name": target_data.get("name", "N/A"),
+            "description": target_data.get("description", "N/A"),
+            "updateStatus": target_data.get("updateStatus", "unknown"),
+            "installedVersion": "N/A",
+            "assignedVersion": "N/A",
+            "installedDistribution": "N/A",
+            "assignedDistribution": "N/A"
+        }
+        
+        # Get installed (current) distribution by following the installedDS link
+        links = target_data.get("_links", {})
+        installed_ds_link = links.get("installedDS", {}).get("href")
+        if installed_ds_link:
+            try:
+                installed_response = requests.get(
+                    installed_ds_link,
+                    auth=(username, password),
+                    headers={"Accept": "application/json"}
+                )
+                if installed_response.status_code == 200:
+                    installed_ds = installed_response.json()
+                    if verbose:
+                        print(f"\nDebug - Installed DS response:")
+                        print(json.dumps(installed_ds, indent=2))
+                    status["installedDistribution"] = installed_ds.get("name", "N/A")
+                    status["installedVersion"] = installed_ds.get("version", "N/A")
+            except requests.exceptions.RequestException as e:
+                if verbose:
+                    print(f"Warning: Could not get installed DS: {e}")
+        
+        # Get assigned (requested) distribution by following the assignedDS link
+        assigned_ds_link = links.get("assignedDS", {}).get("href")
+        if assigned_ds_link:
+            try:
+                assigned_response = requests.get(
+                    assigned_ds_link,
+                    auth=(username, password),
+                    headers={"Accept": "application/json"}
+                )
+                if assigned_response.status_code == 200:
+                    assigned_ds = assigned_response.json()
+                    if verbose:
+                        print(f"\nDebug - Assigned DS response:")
+                        print(json.dumps(assigned_ds, indent=2))
+                    status["assignedDistribution"] = assigned_ds.get("name", "N/A")
+                    status["assignedVersion"] = assigned_ds.get("version", "N/A")
+            except requests.exceptions.RequestException as e:
+                if verbose:
+                    print(f"Warning: Could not get assigned DS: {e}")
+        
+        return status
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error getting status for target {target_id}: {e}", file=sys.stderr)
+        return {
+            "controllerId": target_id,
+            "name": "Error",
+            "description": str(e),
+            "updateStatus": "error",
+            "installedVersion": "N/A",
+            "assignedVersion": "N/A",
+            "installedDistribution": "N/A",
+            "assignedDistribution": "N/A"
+        }
+
+
+def show_all_targets_status(base_url: str, username: str, password: str, verbose: bool = False) -> bool:
+    """Display status of all Hawkbit targets including current and requested versions."""
+    targets = get_all_targets(base_url, username, password, verbose=verbose)
+    
+    if not targets:
+        print("No targets found or error occurred.", file=sys.stderr)
+        return False
+    
+    print(f"\nFound {len(targets)} target(s):\n")
+    
+    # Print header
+    print(f"{'Target ID':<25} {'Status':<15} {'Current Ver':<15} {'Requested Ver':<15} {'Distribution'}")
+    print("-" * 110)
+    
+    # Get detailed status for each target
+    for target in targets:
+        target_id = target["controllerId"]
+        status = get_target_status(base_url, target_id, username, password, verbose=verbose)
+        
+        # Determine if versions match
+        version_match = ""
+        if status["installedVersion"] != "N/A" and status["assignedVersion"] != "N/A":
+            if status["installedVersion"] == status["assignedVersion"]:
+                version_match = "✓"
+            else:
+                version_match = "↑"  # Update pending
+        
+        # Format the output
+        update_status = status["updateStatus"]
+        current_ver = status["installedVersion"]
+        requested_ver = status["assignedVersion"]
+        dist_name = status["installedDistribution"]
+        
+        # Truncate distribution name if too long
+        if len(dist_name) > 30:
+            dist_name = dist_name[:27] + "..."
+        
+        print(f"{target_id:<25} {update_status:<15} {current_ver:<15} {requested_ver:<15} {dist_name}")
+        
+        # Show additional details if verbose
+        if verbose:
+            print(f"  Name: {status['name']}")
+            print(f"  Description: {status['description']}")
+            if status["assignedDistribution"] != "N/A" and status["assignedDistribution"] != status["installedDistribution"]:
+                print(f"  Assigned Distribution: {status['assignedDistribution']}")
+    
+    print()
+    return True
 
 
 def assign_distribution_to_targets(base_url: str, dist_id: int, username: str, password: str, verbose: bool = False) -> bool:
@@ -617,6 +754,15 @@ def main():
     deploy_parser.add_argument("--password", default=os.getenv("HAWKBIT_PASSWORD", "admin"),
                              help="Hawkbit password (default: $HAWKBIT_PASSWORD or admin)")
     
+    # Status command
+    status_parser = subparsers.add_parser("status", help="Show status of all Hawkbit targets")
+    status_parser.add_argument("--hawkbit-url", default=os.getenv("HAWKBIT_URL", "http://192.168.2.44:8080"),
+                             help="Hawkbit server URL (default: $HAWKBIT_URL or http://192.168.2.44:8080)")
+    status_parser.add_argument("--username", default=os.getenv("HAWKBIT_USERNAME", "admin"),
+                             help="Hawkbit username (default: $HAWKBIT_USERNAME or admin)")
+    status_parser.add_argument("--password", default=os.getenv("HAWKBIT_PASSWORD", "admin"),
+                             help="Hawkbit password (default: $HAWKBIT_PASSWORD or admin)")
+    
     args = parser.parse_args()
     
     if args.command == "list":
@@ -675,6 +821,15 @@ def main():
             except Exception as e:
                 print(f"Error during deployment: {e}", file=sys.stderr)
                 sys.exit(1)
+    
+    elif args.command == "status":
+        if not show_all_targets_status(
+            base_url=args.hawkbit_url.rstrip('/'),
+            username=args.username,
+            password=args.password,
+            verbose=args.verbose
+        ):
+            sys.exit(1)
 
 
 if __name__ == "__main__":
