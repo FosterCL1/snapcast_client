@@ -19,16 +19,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Determine latest Raspberry Pi kernel tag
+      - name: Determine latest Raspberry Pi stable kernel tag and SHA
         id: latest
         uses: actions/github-script@v7
         with:
           script: |
             const owner = 'raspberrypi';
             const repo = 'linux';
-            const pattern = /^raspberrypi-kernel[_-]/;
+            const pattern = /^stable_\d{8}$/;
             let page = 1;
             let latestTag = null;
+            let latestSha = null;
             // Paginate until we find a matching tag or run out
             while (!latestTag) {
               const { data: tags } = await github.rest.repos.listTags({ owner, repo, per_page: 100, page });
@@ -36,72 +37,81 @@ jobs:
               const match = tags.find(t => pattern.test(t.name));
               if (match) {
                 latestTag = match.name;
+                latestSha = match.commit?.sha || null;
                 break;
               }
               page++;
               if (page > 10) break; // safety cap
             }
-            if (!latestTag) {
+            if (!latestTag || !latestSha) {
               core.setFailed('Could not resolve latest Raspberry Pi kernel tag');
               return;
             }
-            core.info(`Latest upstream tag: ${latestTag}`);
+            core.info(`Latest upstream tag: ${latestTag} (${latestSha})`);
             core.setOutput('tag', latestTag);
+            core.setOutput('sha', latestSha);
 
-      - name: Read currently tracked tag in this repo (if any)
+      - name: Parse current kernel SHA from raspberrypi4-64-rauc_defconfig
         id: current
         shell: bash
         run: |
           set -euo pipefail
-          TRACK_FILE=".github/raspberrypi_kernel_tag.txt"
-          if [[ -f "${TRACK_FILE}" ]]; then
-            CURR_TAG=$(cat "${TRACK_FILE}" | tr -d '\n' || true)
-          else
-            CURR_TAG=""
+          DEFCONFIG="buildroot-external/configs/raspberrypi4-64-rauc_defconfig"
+          if [[ ! -f "${DEFCONFIG}" ]]; then
+            echo "Defconfig not found: ${DEFCONFIG}" >&2
+            exit 1
           fi
-          echo "Current tracked tag: ${CURR_TAG:-<none>}"
-          echo "tag=${CURR_TAG}" >> "$GITHUB_OUTPUT"
+          # Extract the SHA from the BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION line
+          # Looks like: $(call github,raspberrypi,linux,<sha>)/linux-<sha>.tar.gz
+          CURR_SHA=$(grep -Eo '\\(call github,raspberrypi,linux,[a-f0-9]{7,40}\\)' "${DEFCONFIG}" | sed -E 's/.*linux,([a-f0-9]{7,40}).*/\1/' || true)
+          echo "Current SHA in defconfig: ${CURR_SHA:-<none>}"
+          echo "sha=${CURR_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Decide whether an update is needed
         id: decide
         run: |
           set -euo pipefail
-          LATEST="${{ steps.latest.outputs.tag }}"
-          CURRENT="${{ steps.current.outputs.tag }}"
-          if [[ "${LATEST}" == "${CURRENT}" ]]; then
+          LATEST_SHA="${{ steps.latest.outputs.sha }}"
+          CURRENT_SHA="${{ steps.current.outputs.sha }}"
+          if [[ -n "${CURRENT_SHA}" && "${LATEST_SHA}" == "${CURRENT_SHA}" ]]; then
             echo "no_update=true" >> "$GITHUB_OUTPUT"
             echo "No update needed."
           else
             echo "no_update=false" >> "$GITHUB_OUTPUT"
-            echo "Update needed: ${CURRENT:-<none>} -> ${LATEST}"
+            echo "Update needed: ${CURRENT_SHA:-<none>} -> ${LATEST_SHA}"
           fi
 
-      - name: Create update branch, commit, and push
+      - name: Create update branch, update raspberrypi4-64 defconfig, commit, and push
         if: steps.decide.outputs.no_update == 'false'
         env:
           LATEST_TAG: ${{ steps.latest.outputs.tag }}
+          LATEST_SHA: ${{ steps.latest.outputs.sha }}
         run: |
           set -euo pipefail
           BRANCH="update/rpi-kernel/${LATEST_TAG}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Create a branch from default branch
-          DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@')
-          git checkout -b "${BRANCH}" "origin/${DEFAULT_BRANCH}"
+          DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+          # Checkout from remote default branch if available; fallback to local branch name
+          if git show-ref --verify --quiet "refs/remotes/origin/${DEFAULT_BRANCH}"; then
+            git checkout -b "${BRANCH}" "origin/${DEFAULT_BRANCH}"
+          else
+            git checkout -b "${BRANCH}" "${DEFAULT_BRANCH}"
+          fi
 
-          # Write the tracked tag file and a changelog note
-          mkdir -p .github
-          echo "${LATEST_TAG}" > .github/raspberrypi_kernel_tag.txt
+          # Update only the raspberrypi4-64 RAUC defconfig to point to the new kernel tarball (commit SHA)
+          DEFCONFIG="buildroot-external/configs/raspberrypi4-64-rauc_defconfig"
+          echo "Updating tarball URL in ${DEFCONFIG} to SHA ${LATEST_SHA}"
+          sed -i -E 's#(\(call github,raspberrypi,linux,)[a-f0-9]{7,40}#\1'"${LATEST_SHA}"'#' "$DEFCONFIG"
+          sed -i -E 's#(linux-)[a-f0-9]{7,40}(\.tar\.gz)#\1'"${LATEST_SHA}"'\2#' "$DEFCONFIG"
 
-          # Optionally keep a history file
-          CHANGELOG_FILE=.github/raspberrypi_kernel_history.md
-          NOW=$(date -u +"%Y-%m-%d %H:%M:%SZ")
-          {
-            echo "- ${NOW} Updated to ${LATEST_TAG}"
-          } >> "${CHANGELOG_FILE}"
-
-          git add .github/raspberrypi_kernel_tag.txt "${CHANGELOG_FILE}"
-          git commit -m "Raspberry Pi kernel: track ${LATEST_TAG}"
+          git add "$DEFCONFIG"
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "raspberrypi4-64: track stable kernel ${LATEST_TAG} (${LATEST_SHA})"
+          fi
           git push --set-upstream origin "${BRANCH}"
 
       - name: Open or update pull request
@@ -110,7 +120,9 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const branch = `update/rpi-kernel/${{ steps.latest.outputs.tag }}`;
+            const tag = '${{ steps.latest.outputs.tag }}';
+            const sha = '${{ steps.latest.outputs.sha }}';
+            const branch = `update/rpi-kernel/${tag}`;
             const { data: repo } = await github.rest.repos.get(context.repo);
             const base = repo.default_branch;
 
@@ -128,11 +140,12 @@ jobs:
               return;
             }
 
-            const title = `Update Raspberry Pi kernel tag to ${{ steps.latest.outputs.tag }}`;
+            const title = `Follow Raspberry Pi stable kernel ${tag}`;
             const body = [
-              `Automated update to follow upstream Raspberry Pi kernel tag`,
+              `Automated update to follow upstream Raspberry Pi stable kernel`,
               `- Upstream repo: raspberrypi/linux`,
-              `- New tag: ${{ steps.latest.outputs.tag }}`,
+              `- New tag: ${tag}`,
+              `- Commit: ${sha}`,
               '',
               'If additional steps are needed (e.g., bumping references in build scripts), commit them to this branch.'
             ].join("\n");
