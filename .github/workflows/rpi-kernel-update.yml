@@ -2,7 +2,7 @@ name: Raspberry Pi Kernel Tag Update
 
 on:
   schedule:
-    - cron: '17 */6 * * *' # Every 6 hours at minute 17
+    - cron: '17 2 * * *' # Every day, once a day
   workflow_dispatch:
 
 permissions:
