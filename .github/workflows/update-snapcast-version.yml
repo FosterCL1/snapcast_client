@@ -89,7 +89,7 @@ jobs:
           )
           
           PR_RESPONSE=$(curl -s -X POST \
-            -H "Authorization: token ${{ secrets.GH_PAT }}" \
+            -H "Authorization: Bearer ${{ github.token }}" \
             -H "Accept: application/vnd.github.v3+json" \
             -H "Content-Type: application/json" \
             -d "$PR_BODY" \
@@ -103,4 +103,5 @@ jobs:
             exit 1
           fi
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          # Using the default GITHUB_TOKEN provisioned by Actions; permissions are set above
+          GITHUB_TOKEN: ${{ github.token }}
