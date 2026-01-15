@@ -8,10 +8,16 @@ DefaultDependencies=no
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# Create directories with proper permissions
 ExecStartPre=/bin/mkdir -p /data/persist/etc/dropbear
+ExecStartPre=/bin/chmod 700 /data/persist/etc/dropbear
+ExecStartPre=/bin/chown -R root:root /data/persist/etc/dropbear
+
+# Create /etc/dropbear if it doesn't exist
+ExecStartPre=/bin/mkdir -p /etc/dropbear
 
 # Generate keys if they don't exist
-ExecStart=/bin/sh -c '[ -f /data/persist/etc/dropbear/dropbear_ed25519_host_key ] || dropbearkey -t ed25519 -f /data/persist/etc/dropbear/dropbear_ed25519_host_key'
+ExecStart=/bin/sh -c '[ -f /data/persist/etc/dropbear/dropbear_ed25519_host_key ] || (dropbearkey -t ed25519 -f /data/persist/etc/dropbear/dropbear_ed25519_host_key && chmod 600 /data/persist/etc/dropbear/*_key)'
 
 # Bind mount the persistent directory
 ExecStart=/bin/mount --bind /data/persist/etc/dropbear /etc/dropbear
